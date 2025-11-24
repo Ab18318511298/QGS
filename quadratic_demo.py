@@ -11,6 +11,7 @@ import cv2
 torch.set_default_dtype(torch.float32)
 
 
+# 将3D的高斯协方差投影为2D图像平面协方差
 def build_covariance_2d(
     mean3d, cov3d, viewmatrix, tan_fovx, tan_fovy, focal_x, focal_y
 ):
