@@ -485,19 +485,24 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     # 根据相机内参的主点坐标确定渲染图像的分辨率
     H, W = (intrins[0, -1] * 2).long(), (intrins[1, -1] * 2).long()
     H, W = H.item(), W.item()
+    
+    # 生成图像平面上所有像素（像素中心）的齐次坐标。
+    # 生成像素网格坐标（整数索引）
     pix = torch.stack(torch.meshgrid(torch.arange(H),
-        torch.arange(W), indexing='xy'), dim = -1).to('cuda') # [W, H, 2]
+        torch.arange(W), indexing='xy'), dim = -1).to('cuda') # [H, W, 2]
 
-    pix = pix.view(-1, 2)+0.5
+    pix = pix.view(-1, 2)+0.5 # 展平张量：将 [H, W, 2] 转换为 [H*W, 2]，并将网格从像素顶点移动到像素中心。
     pix = torch.cat([pix, torch.ones([pix.shape[0], 1],device = device)], dim = -1) # [WxH, 3]
     # Compute ray splat intersection
-    
-    cam_pos_local = V2G[:, -1, :3].unsqueeze(1).repeat([1, H * W, 1]) #[N, WxH, 3]
-    cam_ray_local = pix.unsqueeze(0) @ V2G[:, :3, :3] # [1, WxH, 3] X [N, 3, 3] = [N, WxH, 3]
+
+    # 定义每像素一条的射线
+    cam_pos_local = V2G[:, -1, :3].unsqueeze(1).repeat([1, H * W, 1]) # 像素位置o^（局部坐标）[N, WxH, 3]
+    cam_ray_local = pix.unsqueeze(0) @ V2G[:, :3, :3] # 射线方向张量r^（N个高斯的不同局部坐标下）[1, WxH, 3] X [N, 3, 3] = [N, WxH, 3]
     # cam_pos_local = nn.Parameter(cam_pos_local)
     # cam_ray_local = nn.Parameter(cam_ray_local)
-    
-    scales_ = scales.unsqueeze(1).repeat([1, W * H, 1])
+
+    # 计算二次曲面的形状系数（由缩放尺度正负决定）
+    scales_ = scales.unsqueeze(1).repeat([1, W * H, 1]) # [N, 1, 3]repeat为[N, W * H, 3]。
     scales_ = nn.Parameter(scales_)
     sign_s1 = torch.sign(scales[0, 0])
     sign_s2 = torch.sign(scales[0, 1])
@@ -514,7 +519,7 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     rs2_2 = 1 / scale_2_2 * sign_s2
     rs3 = 1 / scale_3_1
     
-    
+    # 求解交点与测地线距离，ABC为二次方程A*t² + B*t + C = 0系数，t为射线（o^ + t * r^）深度，大小均为[N, W * H, 1]。
     A = rs1_2 * cam_ray_local[..., 0]**2 + rs2_2 * cam_ray_local[..., 1]**2
     B = 2 * (rs1_2 * cam_pos_local[..., 0] * cam_ray_local[..., 0] + \
             rs2_2 * cam_pos_local[..., 1] * cam_ray_local[..., 1]) - rs3 * cam_ray_local[..., 2]
@@ -523,7 +528,7 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     # B=nn.Parameter(B)
     # C=nn.Parameter(C)
     
-    
+    # 判别式判断是否相交，得到实相交掩码，只留下存在相交关系的高斯——像素对。
     discriminant = B**2 - 4 * A * C
     intersect_mask = discriminant > 0 
     discriminant_sq_with_intersect = torch.sqrt(discriminant[intersect_mask])
@@ -534,27 +539,30 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     A_with_intersect = A[intersect_mask]
     B_with_intersect = B[intersect_mask]
     
-    
+    # 求根公式求出每个“高斯——像素对”对应的两个交点root_1和root_2对应的射线长度（像素o到交点）。
     B_2A = B_with_intersect / (2 * A_with_intersect)
     disc_sq_2A =  discriminant_sq_with_intersect / (2 * A_with_intersect)
     root_1 = (-B_2A + disc_sq_2A).view(-1, 1)
     root_2 = (-B_2A - disc_sq_2A).view(-1, 1)
     # root_2 = nn.Parameter(root_2)
-    
+
+    # 求出在高斯坐标系下的交点坐标。
     point_local_1 = cam_pos_local[intersect_mask] + root_1 * cam_ray_local[intersect_mask]
     point_local_2 = cam_pos_local[intersect_mask] + root_2 * cam_ray_local[intersect_mask]
     # point_local_2 = nn.Parameter(point_local_2)
-     
+
+    # 提取交点的 “极径”（xy 平面投影的径向距离），用于计算参数a，从而计算曲面的测地距离
     proj_point1 = torch.norm(point_local_1[:, :2],dim=1)
     proj_point2 = torch.norm(point_local_2[:, :2],dim=1)
     # proj_point2 = nn.Parameter(proj_point2)
 
+    # 计算交点1的 “极角”（xy 平面投影的角度参数），用于计算参数a，从而计算曲面的测地距离
     cos_theta_1 = point_local_1[:, 0] / proj_point1 
     sin_theta_1 = point_local_1[:, 1] / proj_point1
     cos_theta_1_2 = cos_theta_1 ** 2
     sin_theta_1_2 = sin_theta_1 ** 2
     
-
+    # 计算交点2的 “极角”（xy 平面投影的角度参数），用于计算参数a，从而计算曲面的测地距离
     cos_theta_2 = point_local_2[:, 0] / proj_point2 
     sin_theta_2 = point_local_2[:, 1] / proj_point2 
     cos_theta_2_2 = cos_theta_2 ** 2
@@ -564,7 +572,8 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     
     r1 = proj_point1
     r2 = proj_point2
-     
+
+    # 计算两个交点对应的参数a与最终对应的测地距离s1与s2。
     a1 = getQuadraticCurveA(cos_theta_1_2, sin_theta_1_2, scale_1_2_intersect, scale_2_2_intersect, scale_3_1_intersect, sign_s1, sign_s2, sign_s3)
     a2 = getQuadraticCurveA(cos_theta_2_2, sin_theta_2_2, scale_1_2_intersect, scale_2_2_intersect, scale_3_1_intersect, sign_s1, sign_s2, sign_s3)
     # a2 = nn.Parameter(a2)
@@ -575,6 +584,7 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     s1_2 = s1**2
     s2_2 = s2**2
 
+    # 针对两个交点的方向（极角 θ1/θ2），计算各向异性的有效尺度阈值 s_sigma_1、s_sigma_2。
     s_sigma_1 = ((scale_1_2_intersect * scale_2_2_intersect) / (scale_2_2_intersect * cos_theta_1_2 + scale_1_2_intersect * sin_theta_1_2))**0.5
     s_sigma_2 = ((scale_1_2_intersect * scale_2_2_intersect) / (scale_2_2_intersect * cos_theta_2_2 + scale_1_2_intersect * sin_theta_2_2))**0.5
     # s_sigma_2 = nn.Parameter(s_sigma_2)
@@ -587,30 +597,35 @@ def quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, view
     # point_normalize_2 = point_local_2
     # s1 = torch.norm(point_normalize_1, dim=1)**2
     # s2 = torch.norm(point_normalize_2, dim=1)**2
-    
-    two_valid_mask = (s1 <= s_sigma_1 * sigma) & (s2 <= s_sigma_2 * sigma)
+
+    # 接下来通过多组掩码筛选，以确定有效交点。
+    two_valid_mask = (s1 <= s_sigma_1 * sigma) & (s2 <= s_sigma_2 * sigma) # 两个交点均有效（测地距离均小于等于动态阈值s_sigma * sigma）
     # two_valid_mask = (s1 <= 1.5**2) & (s2 <= 1.5**2)
-    use_s1 = (root_1 <= root_2).view(-1)
-    use_s1[~two_valid_mask] = False
-    two_invalid_mask = ((s1 > s_sigma_1 * sigma) & (s2 > s_sigma_2 * sigma))
+    use_s1 = (root_1 <= root_2).view(-1) # 优先选择离相机更近的交点，用use_s1 标记。
+    use_s1[~two_valid_mask] = False # 其他情况暂定为False，在后面定义。
+
+    two_invalid_mask = ((s1 > s_sigma_1 * sigma) & (s2 > s_sigma_2 * sigma)) # 两个交点均无效（测地距离均大于动态阈值s_sigma * sigma），直接排除。
     # two_invalid_mask = ((s1 > 1.5**2) & (s2 > 1.5**2))
-    one_valid_mask = ~(two_valid_mask | two_invalid_mask)
-    only_s1_valid_mask = one_valid_mask & (s1 <= s_sigma_1 * sigma)
+    one_valid_mask = ~(two_valid_mask | two_invalid_mask) # 剩下的情况均为单个交点有效
+    only_s1_valid_mask = one_valid_mask & (s1 <= s_sigma_1 * sigma) # 进一步筛选出仅近距离交点s1有效时的掩码。
     # only_s1_valid_mask = one_valid_mask & (s1 <= 1.5**2)
-    use_s1[only_s1_valid_mask] = True
-    use_s2 = ~(use_s1 | two_invalid_mask)
+    use_s1[only_s1_valid_mask] = True # 最终的use_s1掩码包括“两交点s1s2均有效”、“近距离交点s1有效”两种情况。
+    use_s2 = ~(use_s1 | two_invalid_mask) # 最终的use_s2掩码只包括“远距离交点s2有效”一种情况。
+
     
-    
+    # 测地距离归一化，让有效范围在[0, 1]附近。
     s1_normal = s1_2 / s_sigma_1_2
     s2_normal = s2_2 / s_sigma_2_2
-    
+
+    # 返回被两种掩码处理后（找出应使用s1作为交点和应使用s2作为交点的两类“射线————高斯”对）的归一化测地距离。
     s = torch.ones_like(s1_2) * 999
     s[use_s1] = s1_normal[use_s1]
     s[use_s2] = s2_normal[use_s2]
-    
+
+    # 构造s_final 形状为 [N, H*W]，“999”初始化为无效结果。
     s_final = torch.ones([cam_ray_local.shape[0], cam_ray_local.shape[1]], device = device) * 999
-    s_final[intersect_mask] = s.view(-1)
-    s_final_2 = s_final
+    s_final[intersect_mask] = s.view(-1) # 将s扁平化为1维张量后，填充进筛选过的（判别式>0）有效 “高斯 - 射线对” 的测地距离
+    s_final_2 = s_final # 应为s_final_2 = s_final**2。
     
     
     image, omega, gaussians = alpha_blending_with_gaussians(s_final_2, colors, opacities, H, W)
