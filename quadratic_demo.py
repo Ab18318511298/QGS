@@ -691,13 +691,14 @@ def print_element(array:torch.Tensor): #
 if __name__ == "__main__":
     torch.set_printoptions(precision=12, sci_mode=False)
     torch.autograd.set_detect_anomaly(True)
-    num_points=4
+    # 获取4个初始高斯点及对应高斯参数
+    num_points=4 
     means3D, scales_, quats = get_inputs(num_points=num_points)
     scales = scales_.clone()
     scales_[:,2] *= -0.5
     scales_[:,1] *= 0.4
     scales_[:,0] *= 0.2
-    means3D[0]=0
+    means3D[0]=0 # 将第一个高斯点的3D中心设为原点
     
     means3D = nn.Parameter(means3D)
     quats = nn.Parameter(quats)
