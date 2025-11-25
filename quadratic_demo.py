@@ -703,25 +703,28 @@ if __name__ == "__main__":
     means3D = nn.Parameter(means3D)
     quats = nn.Parameter(quats)
     opacities = nn.Parameter(torch.ones_like(means3D[:, :1])) 
+    # 使用matplotlib的Accent色图初始化颜色
     colors = matplotlib.colormaps['Accent'](np.random.randint(0,num_points**2, num_points**2) / num_points**2)[..., :3]
-    colors[0,0] = 1
+    colors[0,0] = 1 # 第一个点设为红色
     colors[0,1] = 0
     colors[0,1] = 0
     
     colors = torch.from_numpy(colors).cuda().to(torch.float32)
     colors = nn.Parameter(colors)
     count = 0
-    sigma = 1.5
+    sigma = 1.5 # 控制高斯的有效范围。
     NUM = 30
     output_folder = "./demo"
     os.makedirs(output_folder, exist_ok=True)
     
     intrins, viewmat, projmat, height, width, c2w = get_cameras(0)
     intrins = intrins[:3, :3]
+    # 调用二次曲面渲染函数生成图像
     image, omega, setup_batch = quadratic_splatting(means3D, scales, quats, colors, opacities, intrins, viewmat, projmat, c2w, sigma=sigma)
     x_min, x_max, y_min, y_max = setup_batch['x_min'], setup_batch['x_max'], setup_batch['y_min'], setup_batch['y_max']
     fig1, (ax1) = plt.subplots(1, 1)
-    
+
+    # 绘制图像并添加高斯点的边界框（用于可视化高斯在图像中的位置）
     img1 = image.detach().cpu().numpy()
     from matplotlib.patches import Rectangle
     lb = torch.cat([x_min, y_min],dim = 1).detach().cpu().numpy()
