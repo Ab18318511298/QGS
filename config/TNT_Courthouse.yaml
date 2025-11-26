@@ -49,7 +49,7 @@ optimizer:
   percent_dense: 0.0001
   multi_view_ncc_weight: 0.0 # 0.15
   multi_view_geo_weight: 0.0
-  densify_grad_threshold: 0.05
+  densify_grad_threshold: 0.05 # 或许0.2？避免户外天空白色高斯的densify。
   curvature_clamp_threshold: -5.0
   lambda_dist: 0.0
   reset_opacity_densify_delay: 1
