@@ -51,7 +51,7 @@ optimizer:
   multi_view_geo_weight: 0.0
   densify_grad_threshold: 0.05 # 或许0.2？避免户外天空白色高斯的densify。
   curvature_clamp_threshold: -5.0
-  lambda_dist: 0.0
+  lambda_dist: 0.0 # 或许需要开启为500？1000？从而能将天空白幕实体压向远处？
   reset_opacity_densify_delay: 1
   lambda_normal: 0.05
 
