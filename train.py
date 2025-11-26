@@ -374,6 +374,7 @@ def training(config, testing_iterations, saving_iterations, checkpoint_iteration
                     if reset_opacity_densify_delay <= 0:
                         size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                         gaussians.densify_and_prune(opt.densify_grad_threshold, 0.05, scene.cameras_extent, size_threshold)
+                        # 或许prune_opacity_threshold改为0.1？0.15？
                     else:
                         reset_opacity_densify_delay -= 1
 
